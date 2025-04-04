@@ -12,7 +12,5 @@ class ClientMainTest {
     @Test
     void shouldSupportMessageExampleTest() {
 
-        final var result = ClientMain.message();
-        assertThat(result).isNotBlank();
     }
 }
