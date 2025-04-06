@@ -1,10 +1,28 @@
 package org.global.dax.shared;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
-public class BytesUtil {
+public final class BytesUtil {
+
+    public final static int FIXED_KEY_BYTES = 4;
+    public final static int MAX_VALUE_BYTES = 2096;
 
     private BytesUtil() {}
+
+    public static String limitKey(String key) {
+        if (key == null) {
+            return null;
+        }
+        return new String(fixByteArray(key.getBytes(StandardCharsets.UTF_8), FIXED_KEY_BYTES));
+    }
+
+    public static String limitValue(String value) {
+        if (value == null) {
+            return null;
+        }
+        return new String(limitByteArray(value.getBytes(StandardCharsets.UTF_8), MAX_VALUE_BYTES));
+    }
 
     public static byte[] limitByteArray(byte[] input, int fixedSize) {
         if (input == null || fixedSize < 1) {

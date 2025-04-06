@@ -5,13 +5,12 @@ import org.global.dax.shared.CacheProtocol;
 import java.nio.channels.SocketChannel;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 public class Delete {
 
     private final SocketChannel channel;
-    private Map<String, Consumer<CacheProtocol.Message>> pendingRequests = new ConcurrentHashMap<>();
+    private final Map<String, Consumer<CacheProtocol.Message>> pendingRequests;
 
     public Delete(SocketChannel channel, Map<String, Consumer<CacheProtocol.Message>> pendingRequests) {
         this.channel = channel;

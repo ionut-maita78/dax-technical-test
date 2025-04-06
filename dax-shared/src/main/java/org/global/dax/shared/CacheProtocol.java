@@ -41,9 +41,6 @@ public class CacheProtocol {
      */
     public static class Message {
 
-        private final static int FIXED_KEY_BYTES = 4;
-        private final static int MAX_VALUE_BYTES = 2096;
-
         private final byte version;
         private final byte operation;
         private final byte[] key;

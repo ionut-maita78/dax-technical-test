@@ -22,6 +22,8 @@ import java.util.function.Consumer;
 
 import static org.global.dax.shared.Properties.HOST;
 import static org.global.dax.shared.Properties.PORT;
+import static org.global.dax.shared.StringUtil.limitKey;
+import static org.global.dax.shared.StringUtil.limitValue;
 
 public final class ClientMain {
 
@@ -160,6 +162,9 @@ public final class ClientMain {
                 }
 
                 String key = parts[1];
+                if (!"ALL".equalsIgnoreCase(key)) {
+                    key = limitKey(key);
+                }
 
                 switch (command) {
                     case "add":
@@ -168,6 +173,7 @@ public final class ClientMain {
                             continue;
                         }
                         String value = parts[2];
+                        value = limitValue(value);
                         new Add(channel, pendingRequests).add(key, value).thenAccept(result -> {
                             System.out.println("Add operation " + (result ? "succeeded" : "failed"));
                         }).exceptionally(e -> {
