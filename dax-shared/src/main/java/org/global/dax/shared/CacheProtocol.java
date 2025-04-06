@@ -40,10 +40,14 @@ public class CacheProtocol {
      * Represents a protocol message with its components
      */
     public static class Message {
-        private byte version;
-        private byte operation;
-        private byte[] key;
-        private byte[] value;
+
+        private final static int FIXED_KEY_BYTES = 4;
+        private final static int MAX_VALUE_BYTES = 2096;
+
+        private final byte version;
+        private final byte operation;
+        private final byte[] key;
+        private final byte[] value;
         private byte status;
 
         // Constructor for request messages (Add, Get, Remove)
