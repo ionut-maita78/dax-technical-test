@@ -14,6 +14,7 @@ import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Scanner;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -29,32 +30,34 @@ public final class ClientMain {
 
     private static final int BUFFER_SIZE = 1024 * 1024; // 1MB buffer
 
+    private static final int INITIAL_RETRY_DELAY_MS = 1000; // Start with 1-second delay
+    private static final int MAX_RETRY_DELAY_MS = 30000; // Max 30 seconds between retries
+    private static final int MAX_RETRY_ATTEMPTS = 10; // Maximum number of retry attempts
+
     private final ByteBuffer buffer = ByteBuffer.allocate(BUFFER_SIZE);
     private SocketChannel channel;
     private Selector selector;
     private boolean running = true;
+
+    private long lastReconnectAttemptTime = 0;
+    private int currentRetryDelay = INITIAL_RETRY_DELAY_MS;
+    private int retryAttempt = 0;
+
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
     // Map to store pending requests and their callbacks
     private final Map<String, Consumer<CacheProtocol.Message>> pendingRequests = new ConcurrentHashMap<>();
 
     public void start() throws IOException {
-        // Open channel and connect to server
-        channel = SocketChannel.open();
-        channel.configureBlocking(false);
-        channel.connect(new InetSocketAddress(HOST, PORT));
-
         // Create selector and register for connect, read operations
         selector = Selector.open();
-        channel.register(selector, SelectionKey.OP_CONNECT);
 
-        // Create a thread for command processing
-        executor.submit(this::handleUserInput);
+        attemptConnection();
 
         try {
             // Event loop
             while (running) {
-                selector.select();
+                selector.select(1000);
 
                 Iterator<SelectionKey> keys = selector.selectedKeys().iterator();
                 while (keys.hasNext()) {
@@ -71,27 +74,103 @@ public final class ClientMain {
                         read(key);
                     }
                 }
+
+                // Check connection state if we're not connected
+                if (channel == null || !channel.isConnected()) {
+                    handleReconnect();
+                }
+
             }
         } finally {
             executor.shutdownNow();
-            channel.close();
+            if (channel != null) {
+                channel.close();
+            }
             selector.close();
         }
     }
 
-    public void finishConnection(SelectionKey key) throws IOException {
+    public void finishConnection(SelectionKey key){
         SocketChannel channel = (SocketChannel) key.channel();
 
         try {
             channel.finishConnect();
+
+            // Connection closed successful, reset retry parameters
+            currentRetryDelay = INITIAL_RETRY_DELAY_MS;
+            retryAttempt = 0;
+
+            // Register for read operations
+            channel.register(selector, SelectionKey.OP_READ);
+
+            // Create a thread for command processing when the server is up
+            executor.submit(this::handleUserInput);
+
+            System.out.println("Connected to cache server");
+
         } catch (IOException e) {
             key.cancel();
-            throw e;
+            System.err.println("Failed to establish connection: " + e.getMessage());
+            // Connection failed immediately, schedule reconnect
+            scheduleReconnect();
         }
 
-        // Register for read operations
-        channel.register(selector, SelectionKey.OP_READ);
-        System.out.println("Connected to cache server");
+    }
+
+
+    private void attemptConnection() {
+        try {
+            // Close any existing channel
+            if (channel != null) {
+                try {
+                    channel.close();
+                } catch (IOException e) {
+                    // Ignore errors during close
+                }
+            }
+
+            // Open new channel and connect to server
+            channel = SocketChannel.open();
+            channel.configureBlocking(false);
+            channel.connect(new InetSocketAddress(HOST, PORT));
+
+            // Register for connect operations
+            channel.register(selector, SelectionKey.OP_CONNECT);
+
+            System.out.println("Attempting to connect to cache server...");
+        } catch (IOException e) {
+            System.err.println("Connection attempt failed: " + e.getMessage());
+        }
+    }
+
+    private void handleReconnect() {
+        if (retryAttempt >= MAX_RETRY_ATTEMPTS) {
+            System.err.println("Maximum retry attempts reached (" + MAX_RETRY_ATTEMPTS + "). Giving up.");
+            running = false;
+            return;
+        }
+
+        // Only attempt reconnection if we've waited the appropriate time
+        if (System.currentTimeMillis() - lastReconnectAttemptTime >= currentRetryDelay) {
+            retryAttempt++;
+            System.out.println("Connection lost. Reconnection attempt " + retryAttempt +
+                    " of " + MAX_RETRY_ATTEMPTS + " (delay: " + (currentRetryDelay/1000) + "s)");
+
+            attemptConnection();
+
+            // Update the backoff delay for next attempt (exponential backoff with jitter)
+            currentRetryDelay = Math.min(currentRetryDelay * 2, MAX_RETRY_DELAY_MS);
+            // Add some randomness to avoid reconnection storms
+            currentRetryDelay = (int)(currentRetryDelay * (0.8 + Math.random() * 0.4));
+
+            lastReconnectAttemptTime = System.currentTimeMillis();
+        }
+    }
+
+
+    private void scheduleReconnect() {
+        lastReconnectAttemptTime = System.currentTimeMillis();
+        // The actual reconnect will happen in the main loop when the delay has passed
     }
 
     private void read(SelectionKey key) {
@@ -144,9 +223,9 @@ public final class ClientMain {
                 }
 
                 if ("heartbeat".equalsIgnoreCase(input)) {
-                    new Hearbeat(channel, pendingRequests).heartbeat().thenAccept(result -> {
-                        System.out.println(result ? "OK" : "FAILED");
-                    }).exceptionally(e -> {
+                    new Hearbeat(channel, pendingRequests).heartbeat().thenAccept(result ->
+                        System.out.println(result ? "OK" : "FAILED")
+                    ).exceptionally(e -> {
                         System.err.println("Error during heartbeat: " + e.getMessage());
                         return null;
                     });
@@ -174,31 +253,27 @@ public final class ClientMain {
                         }
                         String value = parts[2];
                         value = limitValue(value);
-                        new Add(channel, pendingRequests).add(key, value).thenAccept(result -> {
-                            System.out.println("Add operation " + (result ? "succeeded" : "failed"));
-                        }).exceptionally(e -> {
+                        new Add(channel, pendingRequests).add(key, value).thenAccept(result ->
+                            System.out.println("Add operation " + (result ? "succeeded" : "failed"))
+                        ).exceptionally(e -> {
                             System.err.println("Error during add: " + e.getMessage());
                             return null;
                         });
                         break;
 
                     case "get":
-                        new Get(channel, pendingRequests).get(key).thenAccept(result -> {
-                            if (result != null) {
-                                System.out.println(result);
-                            } else {
-                                System.out.println("Key not found");
-                            }
-                        }).exceptionally(e -> {
+                        new Get(channel, pendingRequests).get(key).thenAccept(result ->
+                            System.out.println(Objects.requireNonNullElse(result, "Key not found"))
+                        ).exceptionally(e -> {
                             System.err.println("Error during get: " + e.getMessage());
                             return null;
                         });
                         break;
 
                     case "delete":
-                        new Delete(channel, pendingRequests).delete(key).thenAccept(result -> {
-                            System.out.println("Delete operation " + (result ? "succeeded" : "failed"));
-                        }).exceptionally(e -> {
+                        new Delete(channel, pendingRequests).delete(key).thenAccept(result ->
+                            System.out.println("Delete operation " + (result ? "succeeded" : "failed"))
+                        ).exceptionally(e -> {
                             System.err.println("Error during delete: " + e.getMessage());
                             return null;
                         });
