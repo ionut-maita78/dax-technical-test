@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import static org.global.dax.shared.Properties.PORT;
 
-public final class ServerMain {
+public class NioCacheServer {
     private static final int BUFFER_SIZE = 1024 * 1024; // 1MB buffer
 
     // The cache storage using ConcurrentHashMap
@@ -107,10 +107,9 @@ public final class ServerMain {
 
     public static void main(String[] args) {
         try {
-            new ServerMain().start();
+            new NioCacheServer().start();
         } catch (IOException e) {
             System.err.println("An exception occurred when started the server: " + e.getMessage());
         }
     }
 }
-
